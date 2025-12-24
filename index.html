@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Arix Signature Tree</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <style>
+      body { margin: 0; background-color: #020402; overflow: hidden; }
+      /* Custom Gold Gradient Text */
+      .text-gold-gradient {
+        background: linear-gradient(to bottom, #FCEabb, #F8B500, #FCEabb);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        color: transparent;
+      }
+      .border-gold-gradient {
+        border-image: linear-gradient(to right, #FCEabb, #F8B500, #FCEabb) 1;
+      }
+      /* Animation */
+      @keyframes fadeInDown {
+        from { opacity: 0; transform: translate3d(0, -20px, 0); }
+        to { opacity: 1; transform: translate3d(0, 0, 0); }
+      }
+      .animate-fade-in-down {
+        animation: fadeInDown 1s ease-out forwards;
+      }
+    </style>
+    
+    <!-- Import Map for React 18 Stable Stack -->
+    <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.2.0",
+    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+    "three": "https://esm.sh/three@0.160.0",
+    "@react-three/fiber": "https://esm.sh/@react-three/fiber@8.15.12?external=react,react-dom,three",
+    "@react-three/drei": "https://esm.sh/@react-three/drei@9.99.0?external=react,react-dom,three,@react-three/fiber",
+    "@react-three/postprocessing": "https://esm.sh/@react-three/postprocessing@2.16.0?external=react,react-dom,three,@react-three/fiber",
+    "three-stdlib": "https://esm.sh/three-stdlib@2.29.4?external=three",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/"
+  }
+}
+</script>
+    <!-- Babel Standalone for in-browser JSX compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link rel="stylesheet" href="/index.css">
+</head>
+  <body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+      import React, { useState, useRef, useMemo, Suspense } from 'react';
+      import ReactDOM from 'react-dom/client';
+      import * as THREE from 'three';
+      import { Canvas, useFrame } from '@react-three/fiber';
+      import { OrbitControls, Environment, Float, PerspectiveCamera, Sparkles, Image } from '@react-three/drei';
+      import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing';
+      import { RoundedBoxGeometry } from 'three-stdlib';
+
+      // --- 1. TYPES (Simulated as Constants) ---
+      const TreeMorphState = {
+        SCATTERED: 'SCATTERED',
+        TREE_SHAPE: 'TREE_SHAPE',
+      };
+
+      // --- 2. CONSTANTS ---
+      const COLORS = {
+        EMERALD_DARK: new THREE.Color('#012e16'),
+        EMERALD_LIGHT: new THREE.Color('#005c2e'),
+        GOLD_METALLIC: new THREE.Color('#FFD700'),
+        GOLD_PALE: new THREE.Color('#FCEabb'),
+        RED_VELVET: new THREE.Color('#680C0C'),
+        PINK_LUX: new THREE.Color('#FF94B2'),
+        BG_DARK: '#020402',
+      };
+
+      const TREE_HEIGHT = 12;
+      const TREE_RADIUS_BOTTOM = 5;
+      const SCATTER_RADIUS = 25;
+
+      const FOLIAGE_COUNT = 15000;
+      const ORNAMENT_SPHERE_COUNT = 600; 
+      const ORNAMENT_BOX_COUNT = 1200; 
+      const SPIRAL_PARTICLE_COUNT = 800; 
+      const MEMORY_COUNT = 50; 
+
+      const ANIMATION_SPEED = 2.5;
+
+      const MEMORY_IMAGES = [
+        "https://images.unsplash.com/photo-1516091278147-3d9c2d765b2d?q=80&w=800&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1505322022379-7c3353ee6291?q=80&w=800&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1533228876829-65c94e7b5025?q=80&w=800&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1552422535-c45813c61732?q=80&w=800&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1516575334481-f85287c2c81d?q=80&w=800&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1513542789411-b6a5d4f31634?q=80&w=800&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1519681393784-d120267933ba?q=80&w=800&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1544275825-9988716b377a?q=80&w=800&auto=format&fit=crop",
+      ];
+
+      // --- 3. COMPONENTS ---
+
+      // --- FOLIAGE ---
+      const foliageVertexShader = `
+        uniform float uTime;
+        uniform float uProgress;
+        uniform float uPixelRatio;
+
+        attribute vec3 aScatterPos;
+        attribute vec3 aTreePos;
+        attribute float aRandom;
+
+        varying float vAlpha;
+        varying float vGoldMix;
+
+        void main() {
+          vec3 currentPos = mix(aScatterPos, aTreePos, uProgress);
+          
+          float noise = sin(uTime * 2.0 + aRandom * 10.0) * 0.1;
+          currentPos.x += noise * (1.0 - uProgress);
+          currentPos.y += noise * 0.5;
+
+          if (uProgress > 0.8) {
+            float breathe = sin(uTime * 1.5 + currentPos.y) * 0.05;
+            currentPos.x += normalize(currentPos.x) * breathe;
+            currentPos.z += normalize(currentPos.z) * breathe;
+          }
+
+          vec4 mvPosition = modelViewMatrix * vec4(currentPos, 1.0);
+          gl_Position = projectionMatrix * mvPosition;
+
+          gl_PointSize = (40.0 * aRandom + 20.0) * (1.0 / -mvPosition.z) * uPixelRatio;
+
+          vAlpha = 0.6 + 0.4 * uProgress; 
+          
+          float shimmer = sin(uTime * 5.0 + aRandom * 30.0);
+          vGoldMix = step(0.9, shimmer);
+        }
+      `;
+
+      const foliageFragmentShader = `
+        uniform vec3 uColorBase;
+        uniform vec3 uColorGold;
+
+        varying float vAlpha;
+        varying float vGoldMix;
+
+        void main() {
+          vec2 center = gl_PointCoord - 0.5;
+          float dist = length(center);
+          if (dist > 0.5) discard;
+
+          float glow = 1.0 - (dist * 2.0);
+          glow = pow(glow, 2.0);
+
+          vec3 sparkleBoost = vGoldMix > 0.5 ? vec3(0.5) : vec3(0.0);
+          vec3 finalColor = mix(uColorBase, uColorGold + sparkleBoost, vGoldMix);
+          finalColor += vec3(0.2) * glow;
+
+          gl_FragColor = vec4(finalColor, vAlpha * glow);
+        }
+      `;
+
+      const Foliage = ({ treeState }) => {
+        const shaderRef = useRef(null);
+        const targetProgress = useRef(0);
+        const currentProgress = useRef(0);
+
+        const { positions, scatterPositions, randoms } = useMemo(() => {
+          const pos = new Float32Array(FOLIAGE_COUNT * 3);
+          const sca = new Float32Array(FOLIAGE_COUNT * 3);
+          const rnd = new Float32Array(FOLIAGE_COUNT);
+
+          for (let i = 0; i < FOLIAGE_COUNT; i++) {
+            const t = i / FOLIAGE_COUNT;
+            const angle = t * Math.PI * 2 * 30; 
+            const y = - (TREE_HEIGHT / 2) + t * TREE_HEIGHT;
+            const radiusAtHeight = ((TREE_HEIGHT / 2 - y) / TREE_HEIGHT) * TREE_RADIUS_BOTTOM;
+            const r = radiusAtHeight + (Math.random() - 0.5) * 1.5; 
+            
+            const x = Math.cos(angle) * r;
+            const z = Math.sin(angle) * r;
+
+            pos[i * 3] = x;
+            pos[i * 3 + 1] = y;
+            pos[i * 3 + 2] = z;
+
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos(2 * Math.random() - 1);
+            const sr = SCATTER_RADIUS * Math.cbrt(Math.random());
+            
+            sca[i * 3] = sr * Math.sin(phi) * Math.cos(theta);
+            sca[i * 3 + 1] = sr * Math.sin(phi) * Math.sin(theta);
+            sca[i * 3 + 2] = sr * Math.cos(phi);
+
+            rnd[i] = Math.random();
+          }
+          return { positions: pos, scatterPositions: sca, randoms: rnd };
+        }, []);
+
+        useFrame((state, delta) => {
+          if (shaderRef.current) {
+            shaderRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+            shaderRef.current.uniforms.uPixelRatio.value = state.viewport.dpr;
+
+            targetProgress.current = treeState === TreeMorphState.TREE_SHAPE ? 1.0 : 0.0;
+            const speed = 2.0 * delta;
+            if (currentProgress.current < targetProgress.current) {
+              currentProgress.current = Math.min(currentProgress.current + speed, 1.0);
+            } else if (currentProgress.current > targetProgress.current) {
+              currentProgress.current = Math.max(currentProgress.current - speed, 0.0);
+            }
+            shaderRef.current.uniforms.uProgress.value = currentProgress.current;
+          }
+        });
+
+        const uniforms = useMemo(() => ({
+          uTime: { value: 0 },
+          uProgress: { value: 0 },
+          uPixelRatio: { value: 1 },
+          uColorBase: { value: COLORS.EMERALD_LIGHT },
+          uColorGold: { value: COLORS.GOLD_METALLIC },
+        }), []);
+
+        return (
+          <points>
+            <bufferGeometry>
+              <bufferAttribute attach="attributes-position" count={FOLIAGE_COUNT} array={positions} itemSize={3} />
+              <bufferAttribute attach="attributes-aTreePos" count={FOLIAGE_COUNT} array={positions} itemSize={3} />
+              <bufferAttribute attach="attributes-aScatterPos" count={FOLIAGE_COUNT} array={scatterPositions} itemSize={3} />
+              <bufferAttribute attach="attributes-aRandom" count={FOLIAGE_COUNT} array={randoms} itemSize={1} />
+            </bufferGeometry>
+            <shaderMaterial
+              ref={shaderRef}
+              depthWrite={false}
+              transparent
+              blending={THREE.AdditiveBlending}
+              vertexShader={foliageVertexShader}
+              fragmentShader={foliageFragmentShader}
+              uniforms={uniforms}
+            />
+          </points>
+        );
+      };
+
+      // --- ORNAMENTS ---
+      const tempObject = new THREE.Object3D();
+
+      const Ornaments = ({ treeState }) => {
+        const boxMeshRef = useRef(null);
+        const sphereMeshRef = useRef(null);
+        const boxGeometry = useMemo(() => new RoundedBoxGeometry(1, 1, 1, 2, 0.1), []);
+        const progressRef = useRef(0);
+
+        const generateData = (count, type) => {
+          const data = [];
+          const colorArray = new Float32Array(count * 3);
+          const tempCol = new THREE.Color();
+
+          for (let i = 0; i < count; i++) {
+            const bias = type === 'box' ? 7.0 : 3.5; 
+            const t = Math.pow(Math.random(), bias);
+            const y = - (TREE_HEIGHT / 2) + t * TREE_HEIGHT;
+            const maxR = ((TREE_HEIGHT / 2 - y) / TREE_HEIGHT) * TREE_RADIUS_BOTTOM;
+            const r = maxR + (Math.random() * 0.5); 
+            const angle = Math.random() * Math.PI * 2;
+            
+            const treePos = { x: Math.cos(angle) * r, y: y, z: Math.sin(angle) * r };
+
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos(2 * Math.random() - 1);
+            const sr = SCATTER_RADIUS * 0.8 * Math.cbrt(Math.random());
+            const scatterPos = { x: sr * Math.sin(phi) * Math.cos(theta), y: sr * Math.sin(phi) * Math.sin(theta), z: sr * Math.cos(phi) };
+
+            const rot = { x: Math.random() * Math.PI, y: Math.random() * Math.PI, z: Math.random() * Math.PI };
+            
+            let col = COLORS.GOLD_METALLIC;
+            const rand = Math.random();
+            if (type === 'box') {
+              if (rand > 0.65) col = COLORS.PINK_LUX;
+              else if (rand > 0.35) col = COLORS.GOLD_METALLIC;
+              else if (rand > 0.15) col = COLORS.GOLD_PALE;
+              else col = COLORS.RED_VELVET;
+            } else {
+              if (rand > 0.55) col = COLORS.PINK_LUX;
+              else if (rand > 0.20) col = COLORS.RED_VELVET;
+              else col = COLORS.GOLD_PALE;
+            }
+
+            data.push({ 
+              id: i, 
+              scale: type === 'box' ? 0.1 + Math.random() * 0.45 : 0.25 + Math.random() * 0.3, 
+              color: '#' + col.getHexString(), 
+              scatterPos, 
+              scatterRot: rot, 
+              treePos, 
+              treeRot: { x: 0, y: angle, z: 0 } 
+            });
+
+            tempCol.set(col);
+            colorArray[i * 3] = tempCol.r;
+            colorArray[i * 3 + 1] = tempCol.g;
+            colorArray[i * 3 + 2] = tempCol.b;
+          }
+          return { data, colors: colorArray };
+        };
+
+        const { data: boxData, colors: boxColors } = useMemo(() => generateData(ORNAMENT_BOX_COUNT, 'box'), []);
+        const { data: sphereData, colors: sphereColors } = useMemo(() => generateData(ORNAMENT_SPHERE_COUNT, 'sphere'), []);
+
+        useFrame((state, delta) => {
+          const target = treeState === TreeMorphState.TREE_SHAPE ? 1 : 0;
+          const speed = 1.5 * delta;
+          if (progressRef.current < target) progressRef.current = Math.min(progressRef.current + speed, 1);
+          else if (progressRef.current > target) progressRef.current = Math.max(progressRef.current - speed, 0);
+
+          const t = progressRef.current;
+          const easedT = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+          const time = state.clock.elapsedTime;
+
+          const updateMesh = (mesh, dataArray) => {
+            dataArray.forEach((data, i) => {
+              const { scatterPos, treePos, scatterRot, treeRot, scale } = data;
+              
+              tempObject.position.set(
+                THREE.MathUtils.lerp(scatterPos.x, treePos.x, easedT),
+                THREE.MathUtils.lerp(scatterPos.y, treePos.y, easedT),
+                THREE.MathUtils.lerp(scatterPos.z, treePos.z, easedT)
+              );
+
+              if (t < 0.9) {
+                  const floatScale = (1 - t) * 0.5;
+                  tempObject.position.y += Math.sin(time + data.id) * floatScale;
+                  tempObject.rotation.x = scatterRot.x + time * 0.2 * (1 - t);
+                  tempObject.rotation.y = scatterRot.y + time * 0.1 * (1 - t);
+              } else {
+                   tempObject.rotation.set(
+                       THREE.MathUtils.lerp(scatterRot.x, treeRot.x, easedT) + time * 0.1,
+                       THREE.MathUtils.lerp(scatterRot.y, treeRot.y, easedT) + time * 0.1,
+                       THREE.MathUtils.lerp(scatterRot.z, treeRot.z, easedT)
+                   );
+              }
+              tempObject.scale.setScalar(scale);
+              tempObject.updateMatrix();
+              mesh.setMatrixAt(i, tempObject.matrix);
+            });
+            mesh.instanceMatrix.needsUpdate = true;
+          };
+
+          if (boxMeshRef.current) updateMesh(boxMeshRef.current, boxData);
+          if (sphereMeshRef.current) updateMesh(sphereMeshRef.current, sphereData);
+        });
+
+        return (
+          <group>
+            <instancedMesh ref={boxMeshRef} args={[undefined, undefined, ORNAMENT_BOX_COUNT]} geometry={boxGeometry}>
+              <instancedBufferAttribute attach="instanceColor" args={[boxColors, 3]} />
+              <meshStandardMaterial roughness={0.15} metalness={0.95} envMapIntensity={2.0} />
+            </instancedMesh>
+            <instancedMesh ref={sphereMeshRef} args={[undefined, undefined, ORNAMENT_SPHERE_COUNT]}>
+              <sphereGeometry args={[1, 32, 32]} />
+              <instancedBufferAttribute attach="instanceColor" args={[sphereColors, 3]} />
+              <meshStandardMaterial roughness={0.1} metalness={1.0} envMapIntensity={1.5} />
+            </instancedMesh>
+          </group>
+        );
+      };
+
+      // --- STAR ---
+      const Star = ({ treeState }) => {
+        const groupRef = useRef(null);
+        const ringRef = useRef(null);
+        const coreRef = useRef(null);
+        const spikesRef = useRef(null);
+        
+        const treeY = TREE_HEIGHT / 2 + 0.5;
+        const scatterY = TREE_HEIGHT + 8; 
+
+        useFrame((state, delta) => {
+          if (!groupRef.current || !ringRef.current || !coreRef.current || !spikesRef.current) return;
+          const targetY = treeState === TreeMorphState.TREE_SHAPE ? treeY : scatterY;
+          groupRef.current.position.y = THREE.MathUtils.lerp(groupRef.current.position.y, targetY, delta * 2);
+
+          const t = state.clock.elapsedTime;
+          groupRef.current.position.y += Math.sin(t * 1.5) * 0.005;
+          ringRef.current.rotation.x = Math.sin(t * 0.5) * 0.5;
+          ringRef.current.rotation.y += delta * 0.5;
+          spikesRef.current.rotation.y -= delta * 0.2;
+          const scale = 1 + Math.sin(t * 3) * 0.1; 
+          coreRef.current.scale.setScalar(scale);
+          
+          spikesRef.current.children.forEach((child, i) => {
+              if (child.material) child.material.emissiveIntensity = 1.0 + Math.sin(t * 2 + i) * 0.5;
+          });
+        });
+
+        return (
+          <group ref={groupRef} position={[0, treeY, 0]}>
+            <pointLight intensity={3} distance={15} decay={2} color={COLORS.GOLD_PALE} />
+            <mesh ref={coreRef}>
+              <icosahedronGeometry args={[0.3, 0]} />
+              <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={4.0} toneMapped={false} />
+            </mesh>
+            <group ref={spikesRef}>
+                <mesh scale={[0.2, 2.5, 0.2]}>
+                   <octahedronGeometry args={[1, 0]} />
+                   <meshStandardMaterial color={COLORS.GOLD_METALLIC} emissive={COLORS.GOLD_METALLIC} emissiveIntensity={0.5} metalness={1.0} roughness={0.1} />
+                </mesh>
+                <mesh rotation={[0, 0, Math.PI / 2]} scale={[0.2, 2.5, 0.2]}>
+                   <octahedronGeometry args={[1, 0]} />
+                   <meshStandardMaterial color={COLORS.GOLD_METALLIC} emissive={COLORS.GOLD_METALLIC} emissiveIntensity={0.5} metalness={1.0} roughness={0.1} />
+                </mesh>
+                <mesh rotation={[0, 0, Math.PI / 4]} scale={[0.25, 1.4, 0.25]}>
+                   <octahedronGeometry args={[1, 0]} />
+                   <meshStandardMaterial color={COLORS.GOLD_PALE} emissive={COLORS.GOLD_PALE} emissiveIntensity={0.2} metalness={1.0} roughness={0.1} />
+                </mesh>
+                <mesh rotation={[0, 0, -Math.PI / 4]} scale={[0.25, 1.4, 0.25]}>
+                   <octahedronGeometry args={[1, 0]} />
+                   <meshStandardMaterial color={COLORS.GOLD_PALE} emissive={COLORS.GOLD_PALE} emissiveIntensity={0.2} metalness={1.0} roughness={0.1} />
+                </mesh>
+            </group>
+            <mesh ref={ringRef} rotation={[Math.PI / 2, 0, 0]}>
+              <torusGeometry args={[1.2, 0.02, 16, 100]} />
+              <meshStandardMaterial color="#ffffff" emissive={COLORS.GOLD_PALE} emissiveIntensity={2.0} toneMapped={false} />
+            </mesh>
+            <mesh>
+              <sphereGeometry args={[2, 32, 32]} />
+              <meshBasicMaterial color={COLORS.GOLD_PALE} transparent opacity={0.15} side={THREE.BackSide} depthWrite={false} />
+            </mesh>
+            <Sparkles count={40} scale={3} size={4} speed={0.4} opacity={1} color="#ffffff" />
+          </group>
+        );
+      };
+
+      // --- SPIRAL ---
+      const spiralVertexShader = `
+        uniform float uTime;
+        uniform float uProgress; 
+        uniform float uPixelRatio;
+
+        attribute vec3 aScatterPos;
+        attribute vec3 aTreePos;
+        attribute float aLineProgress; 
+
+        varying float vAlpha;
+        varying float vLineProgress;
+
+        void main() {
+          vec3 pos = mix(aScatterPos, aTreePos, uProgress);
+          float noise = sin(uTime * 3.0 + pos.y * 2.0) * 0.05;
+          pos.x += noise;
+          pos.z += noise;
+
+          vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+          gl_Position = projectionMatrix * mvPosition;
+
+          float pulse = sin(uTime * 5.0 + aLineProgress * 20.0);
+          float baseSize = 60.0 + pulse * 20.0;
+          
+          gl_PointSize = baseSize * (1.0 / -mvPosition.z) * uPixelRatio;
+
+          vLineProgress = aLineProgress;
+          vAlpha = 0.3 + 0.7 * uProgress;
+        }
+      `;
+
+      const spiralFragmentShader = `
+        uniform float uTime;
+        uniform vec3 uColor;
+
+        varying float vAlpha;
+        varying float vLineProgress;
+
+        void main() {
+          vec2 center = gl_PointCoord - 0.5;
+          float dist = length(center);
+          if (dist > 0.5) discard;
+
+          float glow = 1.0 - (dist * 2.0);
+          glow = pow(glow, 3.0);
+
+          float flow = sin(vLineProgress * 25.0 - uTime * 3.0); 
+          float brightness = smoothstep(0.4, 0.9, flow);
+          
+          vec3 finalColor = mix(uColor, vec3(1.0, 1.0, 0.9), brightness * 0.8);
+          finalColor *= (1.0 + brightness * 3.0);
+
+          gl_FragColor = vec4(finalColor, vAlpha * glow);
+        }
+      `;
+
+      const Spiral = ({ treeState }) => {
+        const shaderRef = useRef(null);
+        const currentProgress = useRef(0);
+
+        const { treePositions, scatterPositions, lineProgress } = useMemo(() => {
+          const tPos = new Float32Array(SPIRAL_PARTICLE_COUNT * 3);
+          const sPos = new Float32Array(SPIRAL_PARTICLE_COUNT * 3);
+          const progress = new Float32Array(SPIRAL_PARTICLE_COUNT);
+
+          const turns = 6.0; 
+          const heightOffset = 1.0; 
+
+          for (let i = 0; i < SPIRAL_PARTICLE_COUNT; i++) {
+            const p = i / SPIRAL_PARTICLE_COUNT;
+            const y = - (TREE_HEIGHT / 2) + p * TREE_HEIGHT + heightOffset;
+            const rawRadius = ((TREE_HEIGHT / 2 - (y - heightOffset)) / TREE_HEIGHT) * TREE_RADIUS_BOTTOM;
+            const r = Math.max(0.1, rawRadius + 0.6); 
+            const angle = p * Math.PI * 2 * turns;
+
+            tPos[i * 3] = Math.cos(angle) * r;
+            tPos[i * 3 + 1] = y;
+            tPos[i * 3 + 2] = Math.sin(angle) * r;
+
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos(2 * Math.random() - 1);
+            const sr = SCATTER_RADIUS * 1.1 * Math.cbrt(Math.random()); 
+
+            sPos[i * 3] = sr * Math.sin(phi) * Math.cos(theta);
+            sPos[i * 3 + 1] = sr * Math.sin(phi) * Math.sin(theta);
+            sPos[i * 3 + 2] = sr * Math.cos(phi);
+
+            progress[i] = p;
+          }
+
+          return { treePositions: tPos, scatterPositions: sPos, lineProgress: progress };
+        }, []);
+
+        useFrame((state, delta) => {
+          if (shaderRef.current) {
+            shaderRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+            shaderRef.current.uniforms.uPixelRatio.value = state.viewport.dpr;
+
+            const target = treeState === TreeMorphState.TREE_SHAPE ? 1.0 : 0.0;
+            const speed = 2.0 * delta;
+            if (currentProgress.current < target) currentProgress.current = Math.min(currentProgress.current + speed, 1.0);
+            else if (currentProgress.current > target) currentProgress.current = Math.max(currentProgress.current - speed, 0.0);
+            shaderRef.current.uniforms.uProgress.value = currentProgress.current;
+          }
+        });
+
+        const uniforms = useMemo(() => ({
+          uTime: { value: 0 },
+          uProgress: { value: 0 },
+          uPixelRatio: { value: 1 },
+          uColor: { value: new THREE.Color('#FFD700') },
+        }), []);
+
+        return (
+          <points>
+            <bufferGeometry>
+              <bufferAttribute attach="attributes-position" count={SPIRAL_PARTICLE_COUNT} array={treePositions} itemSize={3} />
+              <bufferAttribute attach="attributes-aTreePos" count={SPIRAL_PARTICLE_COUNT} array={treePositions} itemSize={3} />
+              <bufferAttribute attach="attributes-aScatterPos" count={SPIRAL_PARTICLE_COUNT} array={scatterPositions} itemSize={3} />
+              <bufferAttribute attach="attributes-aLineProgress" count={SPIRAL_PARTICLE_COUNT} array={lineProgress} itemSize={1} />
+            </bufferGeometry>
+            <shaderMaterial
+              ref={shaderRef}
+              depthWrite={false}
+              transparent
+              blending={THREE.AdditiveBlending}
+              vertexShader={spiralVertexShader}
+              fragmentShader={spiralFragmentShader}
+              uniforms={uniforms}
+            />
+          </points>
+        );
+      };
+
+      // --- MEMORIES ---
+      class ImageErrorBoundary extends React.Component {
+        constructor(props) {
+          super(props);
+          this.state = { hasError: false };
+        }
+        static getDerivedStateFromError() { return { hasError: true }; }
+        render() { return this.state.hasError ? null : this.props.children; }
+      }
+
+      const MemoryItem = ({ url, treePos, scatterPos, treeState, index }) => {
+        const ref = useRef(null);
+        const [hovered, setHovered] = useState(false);
+        const randomOffset = useMemo(() => Math.random() * 100, []);
+        const aspect = useMemo(() => 0.8 + Math.random() * 0.4, []);
+        const initialRotation = useMemo(() => (Math.random() - 0.5) * 0.5, []);
+
+        useFrame((state, delta) => {
+          if (!ref.current) return;
+          const isScattered = treeState === TreeMorphState.SCATTERED;
+          const targetPos = isScattered ? scatterPos : treePos;
+          const lerpSpeed = 2.0 * delta;
+          ref.current.position.lerp(targetPos, lerpSpeed);
+
+          const t = state.clock.elapsedTime + randomOffset;
+          if (isScattered) {
+              ref.current.position.y += Math.sin(t * 0.5) * 0.01;
+              const quaternion = new THREE.Quaternion();
+              quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(ref.current.position, state.camera.position, new THREE.Vector3(0, 1, 0)));
+              ref.current.quaternion.slerp(quaternion, 0.1);
+          } else {
+              ref.current.position.y += Math.sin(t * 1.0) * 0.005;
+              const lookTarget = new THREE.Vector3(treePos.x * 2, treePos.y, treePos.z * 2);
+              ref.current.lookAt(lookTarget);
+              ref.current.rotateZ(initialRotation * 0.1); 
+          }
+
+          const baseScale = isScattered ? 4.5 : 2.5;
+          const hoverScale = (hovered) ? 1.2 : 1.0;
+          const finalScale = baseScale * hoverScale;
+          
+          ref.current.scale.lerp(new THREE.Vector3(finalScale, finalScale * aspect, 1), lerpSpeed);
+          
+          if(ref.current.material) {
+              ref.current.material.transparent = true;
+              ref.current.material.opacity = THREE.MathUtils.lerp(ref.current.material.opacity, 1.0, lerpSpeed);
+          }
+        });
+
+        return (
+          <Image 
+            ref={ref}
+            url={url}
+            transparent
+            side={THREE.DoubleSide}
+            onPointerOver={(e) => { e.stopPropagation(); setHovered(true); }}
+            onPointerOut={(e) => setHovered(false)}
+            toneMapped={false} 
+          />
+        );
+      };
+
+      const Memories = ({ treeState }) => {
+        const items = useMemo(() => {
+          return Array.from({ length: MEMORY_COUNT }).map((_, i) => {
+            const url = MEMORY_IMAGES[i % MEMORY_IMAGES.length];
+            const bias = 2.5;
+            const t = Math.pow(Math.random(), bias); 
+            const y = - (TREE_HEIGHT / 2) + t * TREE_HEIGHT;
+            const maxR = ((TREE_HEIGHT / 2 - y) / TREE_HEIGHT) * TREE_RADIUS_BOTTOM;
+            const r = maxR + 0.7 + Math.random() * 0.4; 
+            const angle = Math.random() * Math.PI * 2;
+            const treePos = new THREE.Vector3(Math.cos(angle) * r, y, Math.sin(angle) * r);
+
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos(2 * Math.random() - 1);
+            const sr = SCATTER_RADIUS + 5 + Math.random() * 10;
+            const scatterPos = new THREE.Vector3(sr * Math.sin(phi) * Math.cos(theta), sr * Math.sin(phi) * Math.sin(theta), sr * Math.cos(phi));
+
+            return { url, treePos, scatterPos, index: i };
+          });
+        }, []);
+
+        return (
+          <group>
+            {items.map((item, i) => (
+              <MemoryItem key={i} {...item} treeState={treeState} />
+            ))}
+          </group>
+        );
+      };
+
+      // --- OVERLAY ---
+      const Overlay = ({ treeState, onToggle }) => {
+        const isTree = treeState === TreeMorphState.TREE_SHAPE;
+
+        return (
+          <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-8 md:p-12 z-10">
+            <header className="flex flex-col items-start gap-2 animate-fade-in-down">
+              <div className="border-l-4 border-yellow-500 pl-4">
+                <h1 className="text-4xl md:text-6xl font-serif text-white tracking-widest uppercase">
+                  Merry <span className="text-gold-gradient font-bold">Christmas</span>
+                </h1>
+                <h2 className="text-xl md:text-2xl text-emerald-200/80 font-light tracking-[0.3em] mt-2">
+                  Feifei Baobao
+                </h2>
+              </div>
+            </header>
+            <div className="flex justify-end items-end pointer-events-auto">
+              <button
+                onClick={onToggle}
+                className="group relative px-10 py-4 bg-emerald-950/80 backdrop-blur-md border border-yellow-500/30 hover:border-yellow-400 transition-all duration-500 overflow-hidden"
+              >
+                <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-transparent via-yellow-400/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700 ease-in-out"></div>
+                <span className="relative z-10 font-serif text-xl tracking-widest text-gold-gradient group-hover:text-yellow-200 transition-colors">
+                  {isTree ? "RELEASE MEMORY" : "RESTORE ORDER"}
+                </span>
+                <div className="absolute top-0 left-0 w-2 h-2 border-t border-l border-yellow-500"></div>
+                <div className="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-yellow-500"></div>
+              </button>
+            </div>
+            <div className="absolute bottom-6 left-12 text-xs text-white/20 tracking-widest font-mono">
+              EST. 2024 // REACT THREE FIBER // LUXURY EDITION
+            </div>
+          </div>
+        );
+      };
+
+      // --- EXPERIENCE ---
+      const Experience = ({ treeState }) => {
+        const isScattered = treeState === TreeMorphState.SCATTERED;
+
+        return (
+          <Canvas
+            dpr={[1, 2]}
+            gl={{ 
+              antialias: false, 
+              toneMapping: 3, 
+              toneMappingExposure: 1.2 
+            }}
+          >
+            <PerspectiveCamera makeDefault position={[0, 2, 20]} fov={50} />
+            
+            <ambientLight intensity={0.2} color={COLORS.EMERALD_DARK} />
+            <spotLight 
+              position={[10, 10, 10]} 
+              angle={0.5} 
+              penumbra={1} 
+              intensity={2} 
+              color="#fffae0" 
+              castShadow 
+            />
+            <pointLight position={[-10, -5, -10]} intensity={1} color={COLORS.GOLD_METALLIC} />
+            <Environment preset="city" />
+
+            <Sparkles count={500} scale={20} size={4} speed={0.4} opacity={0.5} color={COLORS.GOLD_PALE} />
+            <Sparkles count={3000} scale={35} size={6} speed={0.2} opacity={0.8} noise={0.2} color="#ffffff" />
+
+            <group position={[0, -2, 0]}>
+                <Float speed={2} rotationIntensity={isScattered ? 0.5 : 0.05} floatIntensity={isScattered ? 1 : 0.1}>
+                  <Foliage treeState={treeState} />
+                  <Ornaments treeState={treeState} />
+                  <Spiral treeState={treeState} />
+                  <Suspense fallback={null}>
+                    <ImageErrorBoundary>
+                      <Memories treeState={treeState} />
+                    </ImageErrorBoundary>
+                  </Suspense>
+                  <Star treeState={treeState} />
+                </Float>
+            </group>
+
+            <OrbitControls 
+              enablePan={isScattered}
+              minPolarAngle={isScattered ? 0 : Math.PI / 4} 
+              maxPolarAngle={isScattered ? Math.PI : Math.PI / 1.8}
+              minDistance={isScattered ? 2 : 10} 
+              maxDistance={isScattered ? 60 : 35}
+            />
+
+            <EffectComposer enableNormalPass={false}>
+              <Bloom luminanceThreshold={0.8} mipmapBlur intensity={1.2} radius={0.6} />
+              <Vignette eskil={false} offset={0.1} darkness={1.1} />
+            </EffectComposer>
+          </Canvas>
+        );
+      };
+
+      // --- MAIN APP ---
+      const App = () => {
+        const [treeState, setTreeState] = useState(TreeMorphState.TREE_SHAPE);
+        const toggleState = () => {
+          setTreeState(prev => prev === TreeMorphState.TREE_SHAPE ? TreeMorphState.SCATTERED : TreeMorphState.TREE_SHAPE);
+        };
+
+        return (
+          <div className="relative w-full h-screen bg-black">
+            <div className="absolute inset-0 z-0">
+              <Experience treeState={treeState} />
+            </div>
+            <Overlay treeState={treeState} onToggle={toggleState} />
+            <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_center,transparent_0%,rgba(0,0,0,0.6)_100%)]"></div>
+          </div>
+        );
+      };
+
+      // --- MOUNT ---
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(
+        <React.StrictMode>
+          <App />
+        </React.StrictMode>
+      );
+    </script>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>
